@@ -138,7 +138,7 @@ public class ClustersProperties {
     String topicValuesPattern;
 
     public enum Type {
-      REMOVE, MASK, REPLACE
+      REMOVE, MASK, REPLACE, KEEP
     }
   }
 
