@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ContainerNode;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import lombok.SneakyThrows;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -21,7 +23,8 @@ class RemoveTest {
   @MethodSource
   void testApplyToJsonContainer(FieldsSelector fieldsSelector, ContainerNode<?> original, ContainerNode<?>  expected) {
     var policy = new Remove(fieldsSelector);
-    assertThat(policy.applyToJsonContainer(original)).isEqualTo(expected);
+    Set<String> maskedFields = new HashSet<>();
+    assertThat(policy.applyToJsonContainer(original, maskedFields)).isEqualTo(expected);
   }
 
   private static Stream<Arguments> testApplyToJsonContainer() {
