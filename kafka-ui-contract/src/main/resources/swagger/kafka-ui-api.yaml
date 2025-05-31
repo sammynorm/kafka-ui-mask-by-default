@@ -4052,6 +4052,7 @@ components:
                                 - REMOVE
                                 - MASK
                                 - REPLACE
+                                - KEEP                                
                             fields:
                               type: array
                               items:
