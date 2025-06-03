@@ -26,6 +26,8 @@ public class DataMasking {
 
   private static final JsonMapper JSON_MAPPER = new JsonMapper();
 
+  private boolean maskByDefault;
+
   @Value
   static class Mask {
     @Nullable
@@ -44,9 +46,11 @@ public class DataMasking {
 
   private final List<Mask> masks;
 
-  public static DataMasking create(@Nullable List<ClustersProperties.Masking> config) {
-    return new DataMasking(
-        Optional.ofNullable(config).orElse(List.of()).stream().map(property -> {
+  public static DataMasking create(ClustersProperties.Cluster clusterConfig) {
+    List<Mask> masks = Optional.ofNullable(clusterConfig.getMasking())
+        .orElse(List.of())
+        .stream()
+        .map(property -> {
           Preconditions.checkNotNull(property.getType(), "masking type not specified");
           Preconditions.checkArgument(
               StringUtils.isNotEmpty(property.getTopicKeysPattern())
@@ -57,13 +61,16 @@ public class DataMasking {
               Optional.ofNullable(property.getTopicValuesPattern()).map(Pattern::compile).orElse(null),
               MaskingPolicy.create(property)
           );
-        }).toList()
-    );
+        })
+        .toList();
+
+    return new DataMasking(masks, clusterConfig.isMaskByDefault());
   }
 
   @VisibleForTesting
-  DataMasking(List<Mask> masks) {
+  DataMasking(List<Mask> masks, boolean maskByDefault) {
     this.masks = masks;
+    this.maskByDefault = maskByDefault;
   }
 
   public UnaryOperator<TopicMessageDTO> getMaskerForTopic(String topic) {
@@ -79,12 +86,12 @@ public class DataMasking {
     var targetMasks = masks.stream()
         .filter(m -> m.shouldBeApplied(topic, target))
         .toList();
-
-    // If there's an unmapped topic, anonymise it except for the key - changable behaviour!
-    if (targetMasks.isEmpty() && target == Serde.Target.VALUE) {
-      return s -> "\"ANONYMIZED\"";
-    } else if (targetMasks.isEmpty() && target == Serde.Target.KEY) {
+    log.info("Disable all masking config is {}", maskByDefault);
+    // If the content is a key, or disableallmasking is enabled
+    if (targetMasks.isEmpty() && target == Serde.Target.KEY || !maskByDefault) {
       return UnaryOperator.identity();
+    } else if (targetMasks.isEmpty() && target == Serde.Target.VALUE) {
+      return s -> "\"ANONYMIZED\"";
     }
     return inputStr -> {
       if (inputStr == null) {
