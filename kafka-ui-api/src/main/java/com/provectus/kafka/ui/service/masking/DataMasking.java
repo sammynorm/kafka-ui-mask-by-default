@@ -3,7 +3,7 @@ package com.provectus.kafka.ui.service.masking;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.databind.node.ContainerNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.provectus.kafka.ui.config.ClustersProperties;
@@ -12,15 +12,21 @@ import com.provectus.kafka.ui.serde.api.Serde;
 import com.provectus.kafka.ui.service.masking.policies.MaskingPolicy;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import lombok.Value;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class DataMasking {
+  private static final Logger log = LoggerFactory.getLogger(DataMasking.class);
 
   private static final JsonMapper JSON_MAPPER = new JsonMapper();
+
+  private boolean maskByDefault;
 
   @Value
   static class Mask {
@@ -40,9 +46,11 @@ public class DataMasking {
 
   private final List<Mask> masks;
 
-  public static DataMasking create(@Nullable List<ClustersProperties.Masking> config) {
-    return new DataMasking(
-        Optional.ofNullable(config).orElse(List.of()).stream().map(property -> {
+  public static DataMasking create(ClustersProperties.Cluster clusterConfig) {
+    List<Mask> masks = Optional.ofNullable(clusterConfig.getMasking())
+        .orElse(List.of())
+        .stream()
+        .map(property -> {
           Preconditions.checkNotNull(property.getType(), "masking type not specified");
           Preconditions.checkArgument(
               StringUtils.isNotEmpty(property.getTopicKeysPattern())
@@ -53,13 +61,16 @@ public class DataMasking {
               Optional.ofNullable(property.getTopicValuesPattern()).map(Pattern::compile).orElse(null),
               MaskingPolicy.create(property)
           );
-        }).toList()
-    );
+        })
+        .toList();
+
+    return new DataMasking(masks, clusterConfig.isMaskByDefault());
   }
 
   @VisibleForTesting
-  DataMasking(List<Mask> masks) {
+  DataMasking(List<Mask> masks, boolean maskByDefault) {
     this.masks = masks;
+    this.maskByDefault = maskByDefault;
   }
 
   public UnaryOperator<TopicMessageDTO> getMaskerForTopic(String topic) {
@@ -72,9 +83,15 @@ public class DataMasking {
 
   @VisibleForTesting
   UnaryOperator<String> getMaskingFunction(String topic, Serde.Target target) {
-    var targetMasks = masks.stream().filter(m -> m.shouldBeApplied(topic, target)).toList();
-    if (targetMasks.isEmpty()) {
+    var targetMasks = masks.stream()
+        .filter(m -> m.shouldBeApplied(topic, target))
+        .toList();
+    log.info("Disable all masking config is {}", maskByDefault);
+    // If the content is a key, or disableallmasking is enabled
+    if (targetMasks.isEmpty() && target == Serde.Target.KEY || !maskByDefault) {
       return UnaryOperator.identity();
+    } else if (targetMasks.isEmpty() && target == Serde.Target.VALUE) {
+      return s -> "\"ANONYMIZED\"";
     }
     return inputStr -> {
       if (inputStr == null) {
@@ -82,20 +99,36 @@ public class DataMasking {
       }
       try {
         JsonNode json = JSON_MAPPER.readTree(inputStr);
-        if (json.isContainerNode()) {
+        if (json.isContainerNode() && json.isObject()) {
+          ObjectNode original = (ObjectNode) json;
+          ObjectNode temp = original.deepCopy();
+
+          Set<String> maskedFields = new java.util.HashSet<>();
+
+          // Apply masking rules and track affected fields
           for (Mask targetMask : targetMasks) {
-            json = targetMask.policy.applyToJsonContainer((ContainerNode<?>) json);
+            temp = (ObjectNode) targetMask.policy.applyToJsonContainer(temp, maskedFields);
           }
-          return json.toString();
+          final ObjectNode masked = temp;
+
+          ObjectNode result = JSON_MAPPER.createObjectNode();
+          original.fieldNames().forEachRemaining(field -> {
+            log.info("Target looks like {}", target);
+            if (maskedFields.contains(field) && masked.has(field)) {
+              result.set(field, masked.get(field));
+            } else if (target == Serde.Target.VALUE) {
+              result.put(field, "ANONYMIZED");
+            } else {
+              result.set(field, original.get(field));
+            }
+          });
+
+          return result.toString();
         }
-      } catch (JsonProcessingException jsonException) {
-        //just ignore
+      } catch (JsonProcessingException ignored) {
+        // fallback to string-based masking
       }
-      // if we can't parse input as json or parsed json is not object/array
-      // we just apply first found policy
-      // (there is no need to apply all of them, because they will just override each other)
-      return targetMasks.get(0).policy.applyToString(inputStr);
+      return "\"ANONYMIZED\"";
     };
   }
-
 }

@@ -22,7 +22,7 @@ class ReplaceTest {
   @MethodSource
   void testApplyToJsonContainer(FieldsSelector fieldsSelector, ContainerNode<?> original, ContainerNode<?>  expected) {
     var policy = new Replace(fieldsSelector, REPLACEMENT_STRING);
-    assertThat(policy.applyToJsonContainer(original)).isEqualTo(expected);
+    assertThat(policy.applyToJsonContainer(original, fieldName)).isEqualTo(expected);
   }
 
   private static Stream<Arguments> testApplyToJsonContainer() {

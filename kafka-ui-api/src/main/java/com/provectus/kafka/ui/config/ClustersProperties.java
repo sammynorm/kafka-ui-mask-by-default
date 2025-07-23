@@ -52,6 +52,7 @@ public class ClustersProperties {
     Long pollingThrottleRate;
     TruststoreConfig ssl;
     AuditProperties audit;
+    boolean maskByDefault = true; 
   }
 
   @Data
@@ -138,7 +139,7 @@ public class ClustersProperties {
     String topicValuesPattern;
 
     public enum Type {
-      REMOVE, MASK, REPLACE
+      REMOVE, MASK, REPLACE, KEEP
     }
   }
 

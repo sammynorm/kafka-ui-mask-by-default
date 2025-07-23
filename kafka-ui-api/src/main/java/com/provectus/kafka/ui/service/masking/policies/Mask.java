@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.google.common.base.Preconditions;
 import java.util.List;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 class Mask extends MaskingPolicy {
@@ -21,8 +22,8 @@ class Mask extends MaskingPolicy {
   }
 
   @Override
-  public ContainerNode<?> applyToJsonContainer(ContainerNode<?> node) {
-    return (ContainerNode<?>) maskWithFieldsCheck(node);
+  public ContainerNode<?> applyToJsonContainer(ContainerNode<?> node, Set<String> maskedFields) {
+    return (ContainerNode<?>) maskWithFieldsCheck(node, maskedFields);
   }
 
   @Override
@@ -40,7 +41,7 @@ class Mask extends MaskingPolicy {
         switch (Character.getType(cp)) {
           case Character.SPACE_SEPARATOR,
               Character.LINE_SEPARATOR,
-              Character.PARAGRAPH_SEPARATOR -> sb.appendCodePoint(cp); // keeping separators as-is
+              Character.PARAGRAPH_SEPARATOR -> sb.appendCodePoint(cp); // keep separators as-is
           case Character.UPPERCASE_LETTER -> sb.append(maskingChars.get(0));
           case Character.LOWERCASE_LETTER -> sb.append(maskingChars.get(1));
           case Character.DECIMAL_DIGIT_NUMBER -> sb.append(maskingChars.get(2));
@@ -51,35 +52,38 @@ class Mask extends MaskingPolicy {
     };
   }
 
-  private JsonNode maskWithFieldsCheck(JsonNode node) {
+  private JsonNode maskWithFieldsCheck(JsonNode node, Set<String> maskedFields) {
     if (node.isObject()) {
       ObjectNode obj = ((ObjectNode) node).objectNode();
       node.fields().forEachRemaining(f -> {
         String fieldName = f.getKey();
         JsonNode fieldVal = f.getValue();
         if (fieldShouldBeMasked(fieldName)) {
-          obj.set(fieldName, maskNodeRecursively(fieldVal));
+          maskedFields.add(fieldName);
+          obj.set(fieldName, maskNodeRecursively(fieldVal, maskedFields));
         } else {
-          obj.set(fieldName, maskWithFieldsCheck(fieldVal));
+          obj.set(fieldName, maskWithFieldsCheck(fieldVal, maskedFields));
         }
       });
       return obj;
     } else if (node.isArray()) {
       ArrayNode arr = ((ArrayNode) node).arrayNode(node.size());
-      node.elements().forEachRemaining(e -> arr.add(maskWithFieldsCheck(e)));
+      node.elements().forEachRemaining(e -> arr.add(maskWithFieldsCheck(e, maskedFields)));
       return arr;
     }
     return node;
   }
 
-  private JsonNode maskNodeRecursively(JsonNode node) {
+  private JsonNode maskNodeRecursively(JsonNode node, Set<String> maskedFields) {
     if (node.isObject()) {
       ObjectNode obj = ((ObjectNode) node).objectNode();
-      node.fields().forEachRemaining(f -> obj.set(f.getKey(), maskNodeRecursively(f.getValue())));
+      node.fields().forEachRemaining(f ->
+          obj.set(f.getKey(), maskNodeRecursively(f.getValue(), maskedFields))
+      );
       return obj;
     } else if (node.isArray()) {
       ArrayNode arr = ((ArrayNode) node).arrayNode(node.size());
-      node.elements().forEachRemaining(e -> arr.add(maskNodeRecursively(e)));
+      node.elements().forEachRemaining(e -> arr.add(maskNodeRecursively(e, maskedFields)));
       return arr;
     }
     return new TextNode(masker.apply(node.asText()));
